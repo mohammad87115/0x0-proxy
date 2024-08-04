@@ -14,7 +14,7 @@ const PORT = 8080;
 app.use(cors());
 
 // Setup Multer for file uploads
-const upload = multer({ dest: "uploads/" });
+const upload = multer({ dest: "tmp/" });
 
 // Proxy route for handling file uploads
 app.post("/upload", upload.single("file"), async (req, res) => {
