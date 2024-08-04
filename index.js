@@ -15,43 +15,40 @@ app.use(cors());
 // This is crucial for handling `multipart/form-data` directly
 app.use(express.raw({
   type: 'multipart/form-data',
-  limit: '10mb', // You can increase this limit based on your needs
+  limit: '10mb', // Adjust the size limit as needed
 }));
 
 // Proxy route for handling file uploads
 app.post('/upload', async (req, res) => {
   try {
-    // Extract the boundary from the Content-Type header
+    // Boundary extraction
     const contentType = req.headers['content-type'];
-    const boundary = '--' + contentType.split('; ')[1].split('=')[1];
+    const boundary = contentType.split('; ')[1].replace('boundary=', '');
 
-    // Convert the raw body to a string for easier manipulation
-    const bodyString = req.body.toString('binary');
+    // Convert boundary to Buffer
+    const boundaryBuffer = Buffer.from(`--${boundary}`);
 
-    // Split the body into parts using the boundary
-    const parts = bodyString.split(boundary).filter(part => part !== '--\r\n' && part.trim());
+    // Find the file part in the multipart buffer
+    const parts = splitBuffer(req.body, boundaryBuffer);
 
-    // Find the part that contains the file data
     const filePart = parts.find(part => part.includes('Content-Disposition: form-data; name="file";'));
 
     if (!filePart) {
       return res.status(400).send('No file uploaded.');
     }
 
-    // Extract file details and content
-    const fileNameMatch = filePart.match(/filename="(.+?)"/);
-    const fileName = fileNameMatch ? fileNameMatch[1] : 'uploadedfile';
+    // Extract file details
+    const fileDetails = parseContentDisposition(filePart);
+    if (!fileDetails) {
+      return res.status(400).send('Invalid file part.');
+    }
 
-    // Find the start of the file content
-    const fileContentStart = filePart.indexOf('\r\n\r\n') + 4;
-    const fileContentEnd = filePart.lastIndexOf('\r\n--');
-
-    // Extract the file buffer from the part
-    const fileBuffer = Buffer.from(filePart.slice(fileContentStart, fileContentEnd), 'binary');
+    // Extract file buffer
+    const fileBuffer = filePart.slice(fileDetails.fileStartIndex, filePart.length - 4); // -4 to remove trailing CRLF
 
     // Prepare form data for the request to 0x0.st
     const formData = new FormData();
-    formData.append('file', fileBuffer, fileName);
+    formData.append('file', fileBuffer, fileDetails.fileName);
 
     // Make the request to 0x0.st
     const response = await axios.post('https://0x0.st', formData, {
@@ -68,5 +65,41 @@ app.post('/upload', async (req, res) => {
   }
 });
 
+// Function to split a buffer by a boundary
+function splitBuffer(buffer, boundary) {
+  const parts = [];
+  let offset = 0;
+
+  while (offset < buffer.length) {
+    const nextBoundaryIndex = buffer.indexOf(boundary, offset);
+
+    if (nextBoundaryIndex === -1) {
+      parts.push(buffer.slice(offset));
+      break;
+    }
+
+    parts.push(buffer.slice(offset, nextBoundaryIndex));
+    offset = nextBoundaryIndex + boundary.length + 2; // Skip CRLF after boundary
+  }
+
+  return parts;
+}
+
+// Function to parse the Content-Disposition header
+function parseContentDisposition(buffer) {
+  const contentDispositionHeader = buffer.toString().match(/Content-Disposition: form-data; name="file"; filename="(.+?)"/);
+
+  if (!contentDispositionHeader) {
+    return null;
+  }
+
+  const fileName = contentDispositionHeader[1];
+  const fileStartIndex = buffer.indexOf('\r\n\r\n') + 4;
+
+  return { fileName, fileStartIndex };
+}
+
 // Start the server
-app.listen(PORT, () =>
+app.listen(PORT, () => {
+  console.log(`Server is running on http://localhost:${PORT}`);
+});
